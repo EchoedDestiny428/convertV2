@@ -4,27 +4,45 @@ import numpy as np
 import pyvista as pv
 
 # --- INITIAL CONFIGURATION ---
-RESOLUTION = 60
+RESOLUTION = 96
 INITIAL_THICKNESS = 0.4
-INITIAL_BOUND = math.pi
+INITIAL_BOUND = 2 * math.pi
+
+EQUATIONS = {
+    "gyroid": {
+        "title": "Gyroid",
+        "function": lambda x, y, z: (
+            math.sin(x) * math.cos(y)
+            + math.sin(y) * math.cos(z)
+            + math.sin(z) * math.cos(x)
+        ),
+    },
+    "diamond": {
+        "title": "Diamond",
+        "function": lambda x, y, z: (
+            math.sin(x) * math.sin(y) * math.sin(z)
+            + math.sin(x) * math.cos(y) * math.cos(z)
+            + math.cos(x) * math.sin(y) * math.cos(z)
+            + math.cos(x) * math.cos(y) * math.sin(z)
+        ),
+    },
+    "sine_sum": {
+        "title": "sin(x)+sin(y)+sin(z)=0",
+        "function": lambda x, y, z: math.sin(x) + math.sin(y) + math.sin(z),
+    },
+    "sphere": {
+        "title": "Sphere",
+        "function": lambda x, y, z: x * x + y * y + z * z - 4.0,
+    },
+}
 
 
-def gyroid_value(x, y, z):
-    return (
-        math.sin(x) * math.cos(y)
-        + math.sin(y) * math.cos(z)
-        + math.sin(z) * math.cos(x)
-    )
+def get_equation_value(equation_key, x, y, z):
+    return EQUATIONS[equation_key]["function"](x, y, z)
 
 
-def format_equation(thickness, bound):
-    return (
-        "f(x,y,z)=sin(x)cos(y)+sin(y)cos(z)+sin(z)cos(x),",
-        f"|f(x,y,z)| <= {thickness:.3f}, x,y,z in [-{bound:.3f}, {bound:.3f}]",
-    )
-
-def get_lattice_mesh(thickness, resolution, bound):
-    """Generate a solid gyroid band and return its surface mesh."""
+def get_lattice_mesh(equation_key, thickness, resolution, bound):
+    """Generate a solid implicit band and return its surface mesh."""
     x_min, x_max = -bound, bound
     y_min, y_max = -bound, bound
     z_min, z_max = -bound, bound
@@ -34,9 +52,26 @@ def get_lattice_mesh(thickness, resolution, bound):
     z = np.linspace(z_min, z_max, resolution)
     X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
 
-    values = (np.sin(X) * np.cos(Y) +
-              np.sin(Y) * np.cos(Z) +
-              np.sin(Z) * np.cos(X))
+    if equation_key == "gyroid":
+        values = (
+            np.sin(X) * np.cos(Y)
+            + np.sin(Y) * np.cos(Z)
+            + np.sin(Z) * np.cos(X)
+        )
+    elif equation_key == "diamond":
+        values = (
+            np.sin(X) * np.sin(Y) * np.sin(Z)
+            + np.sin(X) * np.cos(Y) * np.cos(Z)
+            + np.cos(X) * np.sin(Y) * np.cos(Z)
+            + np.cos(X) * np.cos(Y) * np.sin(Z)
+        )
+    elif equation_key == "sine_sum":
+        values = np.sin(X) + np.sin(Y) + np.sin(Z)
+    elif equation_key == "sphere":
+        radius = bound * 0.55
+        values = X * X + Y * Y + Z * Z - radius * radius
+    else:
+        raise ValueError(f"Unknown equation: {equation_key}")
 
     grid = pv.ImageData(dimensions=(resolution, resolution, resolution))
     grid.spacing = ((x_max - x_min) / (resolution - 1),
@@ -47,16 +82,18 @@ def get_lattice_mesh(thickness, resolution, bound):
     grid.point_data["values"] = values.flatten(order="F")
     grid.point_data["band"] = (np.abs(values) <= thickness).astype(np.uint8).flatten(order="F")
 
-    # Extract the occupied volume first, then surface-extract it so the shell is solid.
+    # Extract the filled band volume, then smooth the outer surface so it stays solid without the staircase look.
     band_volume = grid.threshold(value=0.5, scalars="band")
-    solid_surface = band_volume.extract_surface(algorithm="dataset_surface").triangulate().clean()
-    return solid_surface
+    smooth_surface = band_volume.extract_surface(algorithm="dataset_surface").triangulate().clean()
+    smooth_surface = smooth_surface.smooth_taubin(n_iter=20, pass_band=0.1)
+    return smooth_surface
 
 class AppState:
     def __init__(self):
         self.thickness = INITIAL_THICKNESS
         self.resolution = RESOLUTION
         self.bound = INITIAL_BOUND
+        self.equation_key = "gyroid"
         self.mesh = None
         self.probe_point = (0.0, 0.0, 0.0)
 
@@ -70,9 +107,10 @@ def build_plotter():
     plotter.add_axes(line_width=2)
 
     actor_ref = {"actor": None}
-    probe_ref = {"actor": None, "label": None}
+    probe_ref = {"actor": None}
     def refresh_mesh():
         new_mesh = get_lattice_mesh(
+            equation_key=state.equation_key,
             thickness=state.thickness,
             resolution=state.resolution,
             bound=state.bound,
@@ -93,54 +131,32 @@ def build_plotter():
         )
         plotter.render()
 
-    def render_equation():
-        eq_data = format_equation(state.thickness, state.bound)
-        if isinstance(eq_data, (tuple, list)) and len(eq_data) >= 2:
-            eq_main, eq_constraint = str(eq_data[0]), str(eq_data[1])
-        else:
-            eq_main = str(eq_data)
-            eq_constraint = f"|f(x,y,z)| <= {state.thickness:.3f}, x,y,z in [-{state.bound:.3f}, {state.bound:.3f}]"
-        print(f"Equation: {eq_main}")
-        print(f"Constraint: {eq_constraint}")
-
-        plotter.add_text(
-            eq_main,
-            position=(15, 18),
-            font_size=10,
-            color="#cbd5e1",
-            name="equation_main",
-        )
-        plotter.add_text(
-            eq_constraint,
-            position=(15, 4),
-            font_size=10,
-            color="#cbd5e1",
-            name="equation_constraint",
-        )
-        plotter.render()
-
     def on_thickness_change(value):
         state.thickness = float(value)
         refresh_mesh()
-        render_equation()
 
     def on_resolution_change(value):
-        state.resolution = max(16, int(round(value)))
+        state.resolution = max(24, int(round(value)))
         refresh_mesh()
 
     def on_bound_change(value):
-        state.bound = float(value)
+        step = math.pi / 2
+        state.bound = max(step, round(float(value) / step) * step)
         refresh_mesh()
-        render_equation()
+
+    def set_equation(equation_key):
+        if state.equation_key == equation_key:
+            return
+        state.equation_key = equation_key
+        refresh_mesh()
+        render_probe_point()
 
     def render_probe_point():
         x, y, z = state.probe_point
-        value = gyroid_value(x, y, z)
+        value = get_equation_value(state.equation_key, x, y, z)
 
         if probe_ref["actor"] is not None:
             plotter.remove_actor(probe_ref["actor"])
-        if probe_ref["label"] is not None:
-            plotter.remove_actor(probe_ref["label"])
 
         probe = pv.PolyData(np.array([[x, y, z]], dtype=float))
         probe_ref["actor"] = plotter.add_mesh(
@@ -148,16 +164,6 @@ def build_plotter():
             color="#f97316",
             point_size=14,
             render_points_as_spheres=True,
-        )
-        probe_ref["label"] = plotter.add_point_labels(
-            probe,
-            [f"P({x:.2f}, {y:.2f}, {z:.2f})  f={value:.4f}"],
-            font_size=12,
-            text_color="#f8fafc",
-            shape_color="#0f172a",
-            fill_shape=True,
-            margin=4,
-            always_visible=True,
         )
         print(f"Probe point ({x:.4f}, {y:.4f}, {z:.4f}) -> f = {value:.6f}")
         plotter.render()
@@ -185,7 +191,6 @@ def build_plotter():
         print(f"Saved STL to ./{filename}")
 
     refresh_mesh()
-    render_equation()
     render_probe_point()
 
     # Native PyVista sliders keep the UI in one rendering/event system.
@@ -200,7 +205,7 @@ def build_plotter():
     )
     plotter.add_slider_widget(
         callback=on_resolution_change,
-        rng=[20, 110],
+        rng=[24, 220],
         value=state.resolution,
         title="Resolution",
         pointa=(0.62, 0.10),
@@ -209,18 +214,61 @@ def build_plotter():
     )
     plotter.add_slider_widget(
         callback=on_bound_change,
-        rng=[1.0, 5.0],
+        rng=[math.pi, 8 * math.pi],
         value=state.bound,
-        title="Domain Bound",
+        title="Domain Bound (0.5π)",
         pointa=(0.62, 0.04),
         pointb=(0.95, 0.04),
         style="modern",
     )
 
+    plotter.add_radio_button_widget(
+        callback=lambda: set_equation("gyroid"),
+        radio_button_group="equation",
+        value=True,
+        title="Gyroid",
+        position=(18, 150),
+        size=24,
+        border_size=4,
+        color_on="#14b8a6",
+        color_off="#475569",
+    )
+    plotter.add_radio_button_widget(
+        callback=lambda: set_equation("diamond"),
+        radio_button_group="equation",
+        value=False,
+        title="Diamond",
+        position=(18, 112),
+        size=24,
+        border_size=4,
+        color_on="#14b8a6",
+        color_off="#475569",
+    )
+    plotter.add_radio_button_widget(
+        callback=lambda: set_equation("sine_sum"),
+        radio_button_group="equation",
+        value=False,
+        title="sin(x)+sin(y)+sin(z)",
+        position=(18, 74),
+        size=24,
+        border_size=4,
+        color_on="#14b8a6",
+        color_off="#475569",
+    )
+    plotter.add_radio_button_widget(
+        callback=lambda: set_equation("sphere"),
+        radio_button_group="equation",
+        value=False,
+        title="Sphere",
+        position=(18, 36),
+        size=24,
+        border_size=4,
+        color_on="#14b8a6",
+        color_off="#475569",
+    )
+
     plotter.add_key_event("d", download_stl_file)
     plotter.add_key_event("p", set_probe_point_from_console)
-    plotter.add_text("Gyroid Lattice Studio", position="upper_left", font_size=16, color="#e2e8f0")
-    plotter.add_text("D: export STL | P: set probe point", position="upper_right", font_size=10, color="#cbd5e1")
     plotter.view_isometric()
     return plotter
 
