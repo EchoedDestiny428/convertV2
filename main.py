@@ -99,7 +99,7 @@ class AppState:
 
 
 def build_plotter():
-    print("Initializing PyVista lattice viewer...")
+    print("init sim")
     state = AppState()
     plotter = pv.Plotter(window_size=(1200, 760))
     plotter.title = "Gyroid Lattice Studio"
