@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pyvista as pv
 
-# --- INITIAL CONFIGURATION ---
+# --- init config ---
 RESOLUTION = 96
 INITIAL_THICKNESS = 0.4
 INITIAL_BOUND = 2 * math.pi
@@ -42,7 +42,7 @@ def get_equation_value(equation_key, x, y, z):
 
 
 def get_lattice_mesh(equation_key, thickness, resolution, bound):
-    """Generate a solid implicit band and return its surface mesh."""
+    # Generate a solid implicit band and return its surface mesh.
     x_min, x_max = -bound, bound
     y_min, y_max = -bound, bound
     z_min, z_max = -bound, bound
