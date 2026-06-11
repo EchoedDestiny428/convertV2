@@ -82,7 +82,7 @@ def get_lattice_mesh(equation_key, thickness, resolution, bound):
     grid.point_data["values"] = values.flatten(order="F")
     grid.point_data["band"] = (np.abs(values) <= thickness).astype(np.uint8).flatten(order="F")
 
-    # Extract the filled band volume, then smooth the outer surface so it stays solid without the staircase look.
+    # Extract volume then smoothen the surface. Expensive (calculation wise) but looks much better.
     band_volume = grid.threshold(value=0.5, scalars="band")
     smooth_surface = band_volume.extract_surface(algorithm="dataset_surface").triangulate().clean()
     smooth_surface = smooth_surface.smooth_taubin(n_iter=20, pass_band=0.1)
@@ -193,7 +193,7 @@ def build_plotter():
     refresh_mesh()
     render_probe_point()
 
-    # Native PyVista sliders keep the UI in one rendering/event system.
+    # Native PyVista rendering
     plotter.add_slider_widget(
         callback=on_thickness_change,
         rng=[0.05, 1.2],
@@ -275,5 +275,5 @@ def build_plotter():
 
 if __name__ == "__main__":
     viewer = build_plotter()
-    print("Launching interactive window...")
+    print("starting sim (d to download STL, p to set probe point)")
     viewer.show()
